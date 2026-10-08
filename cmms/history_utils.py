@@ -104,6 +104,7 @@ def format_field_name(field_name):
         'equipment_gov': 'เลขครุภัณฑ์',
         'equipment_price': 'ราคา',
         'equipment_photo': 'รูปภาพ',
+        'equipment_image': 'ไฟล์รูปภาพ',
         'equipment_type': 'ประเภท',
         'equipment_life': 'อายุการใช้งาน',
         'equipment_waranty_date': 'วันที่เริ่มรับประกัน',
@@ -154,7 +155,7 @@ def capture_equipment_snapshot(equipment):
     fields_to_track = [
         'equipment_id', 'equipment_code', 'equipment_name_EN', 'equipment_name_TH',
         'equipment_brand', 'equipment_model', 'equipment_sn', 'equipment_gov',
-        'equipment_price', 'equipment_photo', 'equipment_type', 'equipment_life',
+        'equipment_price', 'equipment_photo', 'equipment_image', 'equipment_type', 'equipment_life',
         'equipment_waranty_date', 'equipment_waranty_due',
         'equipment_distributor_name', 'equipment_distributor_tel',
         'equipment_pm_fq', 'equipment_pm_due',

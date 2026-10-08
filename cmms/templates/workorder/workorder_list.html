@@ -159,6 +159,26 @@
 
     /* Search */
     .wo-search-form { position: relative; min-width: 260px; }
+    .wo-type-filter-form {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-width: 260px;
+    }
+    .wo-type-filter-form label {
+        color: #64748b;
+        font-size: 0.8rem;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .wo-type-filter-form select {
+        min-width: 180px;
+        border: 2px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 0.625rem 2rem 0.625rem 0.75rem;
+        background: #fff;
+        font-size: 0.875rem;
+    }
     .wo-search-form i {
         position: absolute; left: 1rem; top: 50%;
         transform: translateY(-50%); color: #94a3b8; z-index: 1;
@@ -360,35 +380,49 @@
     <!-- Toolbar: Filters + Search -->
     <div class="wo-toolbar">
         <div class="wo-filter-tabs">
-            <a href="?{% if q %}q={{ q|urlencode }}{% endif %}"
+            <a href="?{% if q %}q={{ q|urlencode }}&{% endif %}{% if request.GET.today %}today={{ request.GET.today|urlencode }}&{% endif %}{% if selected_work_type %}work_type={{ selected_work_type|urlencode }}{% endif %}"
                class="filter-tab {% if not request.GET.status %}active{% endif %}">
                 ทั้งหมด
             </a>
-            <a href="?status=open{% if q %}&q={{ q|urlencode }}{% endif %}"
+            <a href="?status=open{% if q %}&q={{ q|urlencode }}{% endif %}{% if request.GET.today %}&today={{ request.GET.today|urlencode }}{% endif %}{% if selected_work_type %}&work_type={{ selected_work_type|urlencode }}{% endif %}"
                class="filter-tab {% if request.GET.status == 'open' %}active{% endif %}">
                 <span class="status-dot s-open"></span> Open
             </a>
-            <a href="?status=assigned{% if q %}&q={{ q|urlencode }}{% endif %}"
+            <a href="?status=assigned{% if q %}&q={{ q|urlencode }}{% endif %}{% if request.GET.today %}&today={{ request.GET.today|urlencode }}{% endif %}{% if selected_work_type %}&work_type={{ selected_work_type|urlencode }}{% endif %}"
                class="filter-tab {% if request.GET.status == 'assigned' %}active{% endif %}">
                 <span class="status-dot s-assigned"></span> Assigned
             </a>
-            <a href="?status=in_progress{% if q %}&q={{ q|urlencode }}{% endif %}"
+            <a href="?status=in_progress{% if q %}&q={{ q|urlencode }}{% endif %}{% if request.GET.today %}&today={{ request.GET.today|urlencode }}{% endif %}{% if selected_work_type %}&work_type={{ selected_work_type|urlencode }}{% endif %}"
                class="filter-tab {% if request.GET.status == 'in_progress' %}active{% endif %}">
                 <span class="status-dot s-in_progress"></span> In Progress
             </a>
-            <a href="?status=completed{% if q %}&q={{ q|urlencode }}{% endif %}"
+            <a href="?status=completed{% if q %}&q={{ q|urlencode }}{% endif %}{% if request.GET.today %}&today={{ request.GET.today|urlencode }}{% endif %}{% if selected_work_type %}&work_type={{ selected_work_type|urlencode }}{% endif %}"
                class="filter-tab {% if request.GET.status == 'completed' %}active{% endif %}">
                 <span class="status-dot s-completed"></span> Completed
             </a>
-            <a href="?status=verified{% if q %}&q={{ q|urlencode }}{% endif %}"
+            <a href="?status=verified{% if q %}&q={{ q|urlencode }}{% endif %}{% if request.GET.today %}&today={{ request.GET.today|urlencode }}{% endif %}{% if selected_work_type %}&work_type={{ selected_work_type|urlencode }}{% endif %}"
                class="filter-tab {% if request.GET.status == 'verified' %}active{% endif %}">
                 <span class="status-dot s-verified"></span> Verified
             </a>
         </div>
         <form class="wo-search-form" method="get">
             {% if request.GET.status %}<input type="hidden" name="status" value="{{ request.GET.status }}">{% endif %}
+            {% if request.GET.today %}<input type="hidden" name="today" value="{{ request.GET.today }}">{% endif %}
+            {% if selected_work_type %}<input type="hidden" name="work_type" value="{{ selected_work_type }}">{% endif %}
             <i class="bi bi-search"></i>
             <input type="text" name="q" value="{{ q }}" placeholder="ค้นหาใบงาน..." autocomplete="off">
+        </form>
+        <form class="wo-type-filter-form" method="get">
+            {% if request.GET.status %}<input type="hidden" name="status" value="{{ request.GET.status }}">{% endif %}
+            {% if request.GET.today %}<input type="hidden" name="today" value="{{ request.GET.today }}">{% endif %}
+            {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
+            <label for="work-type-filter">ความต้องการ / ประเภทงาน</label>
+            <select id="work-type-filter" name="work_type" onchange="this.form.submit()">
+                <option value="">ทุกประเภท</option>
+                {% for option in work_type_options %}
+                    <option value="{{ option.value }}" {% if selected_work_type == option.value %}selected{% endif %}>{{ option.label }}</option>
+                {% endfor %}
+            </select>
         </form>
     </div>
 

@@ -626,7 +626,7 @@
         {% endfor %}
     {% endif %}
 
-    <form method="post" action="{% if edit %}{% url 'edit_equipment' equipment_list.id %}{% else %}{% url 'add_equipment' %}{% endif %}" data-check-url="{% url 'api_check_equipment_id' %}" id="equipmentForm">
+    <form method="post" enctype="multipart/form-data" action="{% if edit %}{% url 'edit_equipment' equipment_list.id %}{% else %}{% url 'add_equipment' %}{% endif %}" data-check-url="{% url 'api_check_equipment_id' %}" id="equipmentForm">
     {% csrf_token %}
 
     <!-- Section 1: ข้อมูลทั่วไป -->
@@ -1207,9 +1207,27 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="equipment_photo"><i class="bi bi-image"></i> รูปภาพ (URL)</label>
-                    <input type="text" id="equipment_photo" name="equipment_photo" class="form-control {% if errors.equipment_photo %}is-invalid{% elif form_values.equipment_photo %}is-valid{% endif %}" value="{{ form_values.equipment_photo|default:'' }}" placeholder="https://...">
+                    <label for="equipment_photo"><i class="bi bi-link-45deg"></i> รูปภาพ (URL)</label>
+                    <input type="url" id="equipment_photo" name="equipment_photo" class="form-control {% if errors.equipment_photo %}is-invalid{% elif form_values.equipment_photo %}is-valid{% endif %}" value="{{ form_values.equipment_photo|default:'' }}" placeholder="https://...">
                     {% if errors.equipment_photo %}<div class="invalid-feedback">{{ errors.equipment_photo }}</div>{% endif %}
+                </div>
+
+                <div class="form-group">
+                    <label for="equipment_image"><i class="bi bi-image"></i> อัปโหลดรูปภาพ</label>
+                    <input type="file" id="equipment_image" name="equipment_image" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" class="form-control {% if errors.equipment_image %}is-invalid{% endif %}">
+                    <div class="form-text">รองรับ JPG, PNG, GIF, WEBP และ BMP ขนาดไม่เกิน 10 MB ชื่อไฟล์จะใช้รหัสเครื่อง</div>
+                    {% if errors.equipment_image %}<div class="invalid-feedback">{{ errors.equipment_image }}</div>{% endif %}
+                    <div id="equipment-image-preview" class="mt-2">
+                        {% if has_equipment_image %}
+                            <img src="{% url 'equipment_image_view' equipment_list.id %}" alt="รูปภาพ {{ equipment_list.equipment_id }}" style="max-width:180px;max-height:140px;object-fit:contain;">
+                            <div><a href="{% url 'equipment_image_download' equipment_list.id %}">ดาวน์โหลดภาพที่บันทึกไว้</a></div>
+                        {% elif form_values.equipment_photo %}
+                            <img src="{{ form_values.equipment_photo }}" alt="ตัวอย่างรูปภาพอุปกรณ์" style="max-width:180px;max-height:140px;object-fit:contain;" onerror="this.hidden=true; this.nextElementSibling.hidden=false;">
+                            <span hidden class="text-muted">ยังไม่มีรูปภาพแนบ</span>
+                        {% else %}
+                            <span class="text-muted">ยังไม่มีรูปภาพแนบ</span>
+                        {% endif %}
+                    </div>
                 </div>
             </div>
         </div>
@@ -1703,6 +1721,23 @@
 
     </form>
 </div>
+
+<script>
+document.getElementById('equipment_image')?.addEventListener('change', function () {
+    const preview = document.getElementById('equipment-image-preview');
+    preview.replaceChildren();
+    const file = this.files && this.files[0];
+    if (!file) return;
+    const image = document.createElement('img');
+    image.alt = 'ตัวอย่างรูปภาพที่เลือก';
+    image.style.maxWidth = '180px';
+    image.style.maxHeight = '140px';
+    image.style.objectFit = 'contain';
+    image.src = URL.createObjectURL(file);
+    image.onload = () => URL.revokeObjectURL(image.src);
+    preview.appendChild(image);
+});
+</script>
 
 <!-- EML Selection Modal -->
 <div class="modal fade modal-modern" id="emlModal" tabindex="-1" aria-labelledby="emlModalLabel" aria-hidden="true">

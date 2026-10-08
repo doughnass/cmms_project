@@ -3,6 +3,7 @@ try:
 except Exception:
     pd = None
 import logging
+import mimetypes
 import os
 
 from django import forms
@@ -13,7 +14,7 @@ from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib.auth.decorators import user_passes_test
 from django.contrib.auth.forms import PasswordChangeForm
-from django.http import HttpResponse, JsonResponse
+from django.http import FileResponse, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -2554,6 +2555,100 @@ def equipment_list(request):
     )
 
 
+def _validate_equipment_image(upload):
+    if upload is None:
+        return None
+    allowed_types = {
+        ".jpg": ("image/jpeg", lambda header: header.startswith(b"\xff\xd8\xff")),
+        ".jpeg": ("image/jpeg", lambda header: header.startswith(b"\xff\xd8\xff")),
+        ".png": ("image/png", lambda header: header.startswith(b"\x89PNG\r\n\x1a\n")),
+        ".gif": ("image/gif", lambda header: header.startswith((b"GIF87a", b"GIF89a"))),
+        ".webp": (
+            "image/webp",
+            lambda header: header.startswith(b"RIFF") and header[8:12] == b"WEBP",
+        ),
+        ".bmp": ("image/bmp", lambda header: header.startswith(b"BM")),
+    }
+    extension = os.path.splitext(upload.name)[1].lower()
+    if extension not in allowed_types:
+        return "กรุณาเลือกไฟล์ภาพ JPG, PNG, GIF, WEBP หรือ BMP"
+    expected_type, signature_check = allowed_types[extension]
+    header = upload.read(12)
+    upload.seek(0)
+    if upload.content_type != expected_type or not signature_check(header):
+        return "ไฟล์ที่เลือกไม่ใช่รูปภาพตามชนิดไฟล์ที่กำหนด"
+    if upload.size > 10 * 1024 * 1024:
+        return "ไฟล์ภาพต้องมีขนาดไม่เกิน 10 MB"
+    return None
+
+
+def _save_equipment_image(equipment, upload):
+    from .models import equipment_image_upload_path
+
+    old_name = equipment.equipment_image.name
+    target_name = equipment_image_upload_path(equipment, upload.name)
+    if default_storage.exists(target_name):
+        default_storage.delete(target_name)
+    equipment.equipment_image.save(os.path.basename(target_name), upload, save=True)
+    if old_name and old_name != equipment.equipment_image.name:
+        default_storage.delete(old_name)
+
+
+def _equipment_image_exists(equipment):
+    image = equipment.equipment_image
+    return bool(image and image.storage.exists(image.name))
+
+
+@login_required
+def equipment_images(request):
+    equipment_with_images = (
+        Equipment_list.objects.exclude(equipment_image="")
+        .order_by("equipment_id")
+    )
+    equipment = [
+        {
+            "equipment": item,
+            "image_available": _equipment_image_exists(item),
+        }
+        for item in equipment_with_images
+    ]
+    return render(
+        request,
+        "equipment/equipment_images.html",
+        {"equipment_images": equipment},
+    )
+
+
+@login_required
+def equipment_image_view(request, equipment_list_id):
+    equipment = get_object_or_404(Equipment_list, id=equipment_list_id)
+    if not _equipment_image_exists(equipment):
+        return HttpResponse(status=404)
+    image = equipment.equipment_image
+    content_type = mimetypes.guess_type(image.name)[0] or "application/octet-stream"
+    return FileResponse(
+        image.open("rb"),
+        content_type=content_type,
+        as_attachment=False,
+        filename=os.path.basename(image.name),
+    )
+
+
+@login_required
+def equipment_image_download(request, equipment_list_id):
+    equipment = get_object_or_404(Equipment_list, id=equipment_list_id)
+    if not _equipment_image_exists(equipment):
+        return HttpResponse(status=404)
+    image = equipment.equipment_image
+    content_type = mimetypes.guess_type(image.name)[0] or "application/octet-stream"
+    return FileResponse(
+        image.open("rb"),
+        content_type=content_type,
+        as_attachment=True,
+        filename=os.path.basename(image.name),
+    )
+
+
 @permission_required("cmms.add_equipment_list", raise_exception=True)
 def add_equipment(request):
     if request.method == "POST":
@@ -2603,6 +2698,7 @@ def add_equipment(request):
 
         form_values = {}
         errors = {}
+        image_upload = request.FILES.get("equipment_image")
         # Collect values (no longer require presence for any field)
         for field in required_fields:
             val = request.POST.get(field, "")
@@ -2610,6 +2706,10 @@ def add_equipment(request):
                 val = val.strip()
             form_values[field] = val
             # Removed: required validation (allow empty values)
+
+        image_error = _validate_equipment_image(image_upload)
+        if image_error:
+            errors["equipment_image"] = image_error
 
         # numeric validation
         for field in numeric_fields:
@@ -2735,6 +2835,8 @@ def add_equipment(request):
             created_by=request.user.get_full_name() or request.user.username if request.user.is_authenticated else '',
         )
         equipment_list.save()
+        if image_upload:
+            _save_equipment_image(equipment_list, image_upload)
         
         # Log creation history
         new_data = capture_equipment_snapshot(equipment_list)
@@ -2905,6 +3007,11 @@ def add_equipment(request):
 def edit_equipment(request, equipment_list_id):
     if request.method == "POST":
         equipment_list = Equipment_list.objects.get(id=equipment_list_id)
+        image_upload = request.FILES.get("equipment_image")
+        image_error = _validate_equipment_image(image_upload)
+        if image_error:
+            messages.error(request, image_error)
+            return redirect("edit_equipment", equipment_list_id=equipment_list_id)
         # prevent assigning a duplicate equipment_id when editing
         new_equipment_id = request.POST.get("equipment_id", "").strip()
         if (
@@ -3016,6 +3123,7 @@ def edit_equipment(request, equipment_list_id):
                 "form_values": form_values,
                 "edit": True,
                 "equipment_list": equipment_list,
+                "has_equipment_image": _equipment_image_exists(equipment_list),
                 "master_equipment_type": _ml("equipment_type"),
                 "master_frequency_cal": _ml("frequency_cal"),
                 "master_frequency_pm": _ml("frequency_pm"),
@@ -3086,7 +3194,10 @@ def edit_equipment(request, equipment_list_id):
         # Set updated_by before saving
         equipment_list.updated_by = request.user.get_full_name() or request.user.username if request.user.is_authenticated else ''
         
-        equipment_list.save()
+        if image_upload:
+            _save_equipment_image(equipment_list, image_upload)
+        else:
+            equipment_list.save()
         
         # Log edit history
         new_data = capture_equipment_snapshot(equipment_list)
@@ -3276,6 +3387,7 @@ def edit_equipment(request, equipment_list_id):
         "form_values": form_values,
         "edit": True,
         "equipment_list": equipment_list,
+        "has_equipment_image": _equipment_image_exists(equipment_list),
         "master_equipment_type": _ml("equipment_type"),
         "master_frequency_cal": _ml("frequency_cal"),
         "master_frequency_pm": _ml("frequency_pm"),
@@ -3367,6 +3479,7 @@ def equipment_profile(request, code):
 
     context = {
         "equipment": equipment,
+        "has_equipment_image": _equipment_image_exists(equipment),
         "today": today,
         "qr_payload": qr_payload,
         "qr_image_url": qr_image_url,
@@ -3838,10 +3951,14 @@ def export_equipment_list(request):
 @login_required
 @permission_required("cmms.view_workorder", raise_exception=True)
 def workorder_list(request):
-    from cmms.models import WorkOrder
+    from django.db.models import Q
+
+    from cmms.models import MasterItem, WorkOrder
 
     q = request.GET.get("q", "").strip()
-    all_wos = WorkOrder.objects.all()
+    all_wos = WorkOrder.objects.select_related(
+        "equipment", "assigned_to", "origin_request"
+    ).prefetch_related("workorder_types")
     if q:
         all_wos = all_wos.filter(title__icontains=q)
 
@@ -3855,6 +3972,82 @@ def workorder_list(request):
             if statuses:
                 all_wos = all_wos.filter(status__in=statuses)
 
+    work_type_param = request.GET.get("work_type", "").strip()
+    work_type_options = []
+    work_type_items = list(
+        MasterItem.objects.filter(category="workorder_type", active=True).order_by(
+            "order", "label"
+        )
+    )
+    for item in work_type_items:
+        work_type_options.append(
+            {"value": f"master:{item.pk}", "label": item.label}
+        )
+
+    master_type_codes = {
+        item.code.strip().casefold()
+        for item in work_type_items
+        if item.code and item.code.strip()
+    }
+    for value, label in WorkOrder.WORKORDER_TYPE_CHOICES:
+        if value.casefold() not in master_type_codes:
+            work_type_options.append(
+                {"value": f"legacy:{value}", "label": label}
+            )
+
+    if work_type_param.startswith("master:"):
+        try:
+            selected_master_type = next(
+                item
+                for item in work_type_items
+                if str(item.pk) == work_type_param.removeprefix("master:")
+            )
+        except StopIteration:
+            selected_master_type = None
+        if selected_master_type:
+            legacy_values = [selected_master_type.label]
+            if selected_master_type.code:
+                legacy_values.append(selected_master_type.code)
+            type_query = Q(workorder_types=selected_master_type) | Q(
+                workorder_type__in=legacy_values
+            )
+            if selected_master_type.label:
+                type_query |= Q(title__icontains=selected_master_type.label)
+            if selected_master_type.code:
+                type_query |= Q(title__icontains=selected_master_type.code)
+            all_wos = all_wos.filter(type_query)
+        else:
+            work_type_param = ""
+    elif work_type_param.startswith("legacy:"):
+        legacy_type = work_type_param.removeprefix("legacy:")
+        if legacy_type in dict(WorkOrder.WORKORDER_TYPE_CHOICES):
+            legacy_values = [legacy_type]
+            selected_master_types = [
+                item
+                for item in work_type_items
+                if item.code.casefold() == legacy_type.casefold()
+                or item.label.casefold() == legacy_type.casefold()
+            ]
+            type_query = Q(workorder_type__iexact=legacy_type) | Q(
+                workorder_types__in=selected_master_types
+            )
+            type_labels = {
+                item.label for item in selected_master_types if item.label
+            }
+            type_labels.update(
+                label
+                for value, label in WorkOrder.WORKORDER_TYPE_CHOICES
+                if value.casefold() == legacy_type.casefold()
+            )
+            for label in type_labels:
+                type_query |= Q(title__icontains=label)
+            type_query |= Q(title__icontains=legacy_type)
+            all_wos = all_wos.filter(type_query)
+        else:
+            work_type_param = ""
+    else:
+        work_type_param = ""
+
     # filter by today
     today_param = request.GET.get("today", "").lower()
     if today_param in ("1", "true", "yes"):
@@ -3863,7 +4056,14 @@ def workorder_list(request):
         today_date = timezone.localtime().date()
         all_wos = all_wos.filter(reported_at__date=today_date)
     return render(
-        request, "workorder/workorder_list.html", {"workorders": all_wos, "q": q}
+        request,
+        "workorder/workorder_list.html",
+        {
+            "workorders": all_wos.distinct(),
+            "q": q,
+            "work_type_options": work_type_options,
+            "selected_work_type": work_type_param,
+        },
     )
 
 
@@ -5111,7 +5311,16 @@ def master_data(request):
     # Build a dynamic menu for master data. Each item may provide a url_name (Django named route)
     # and/or a fallback path. This keeps template simple and robust if some routes are missing.
     menu = [
-        {"label": "Equipment Master List", "url_name": "EML_list", "path": "/EML_list"},
+        {
+            "label": "Equipment Images",
+            "url_name": "equipment_images",
+            "path": "/equipment-images/",
+        },
+        {
+            "label": "Equipment Master List",
+            "url_name": "equipment_list",
+            "path": "/equipment_list/",
+        },
         {
             "label": "Customer Structure",
             "url_name": "customer_list",
@@ -5813,6 +6022,9 @@ def create_account(request):
     from .models import Profile
 
     User = get_user_model()
+    department_options = MasterItem.objects.filter(
+        category="customers", active=True
+    ).order_by("order", "label").values_list("label", flat=True)
 
     if request.method == "POST":
         data = request.POST
@@ -5856,6 +6068,7 @@ def create_account(request):
             return render(request, "create_account.html", {
                 "errors": errors,
                 "form_values": form_values,
+                "department_options": department_options,
             })
 
         user = User.objects.create_user(
@@ -5885,7 +6098,11 @@ def create_account(request):
         )
         return redirect("login")
 
-    return render(request, "create_account.html")
+    return render(
+        request,
+        "create_account.html",
+        {"department_options": department_options},
+    )
 
 
 def _can_approve_accounts(user):

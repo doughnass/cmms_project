@@ -333,10 +333,108 @@
   }
 }
 @media print {
-  .profile-head { display: none !important; }
-  .profile-wrap { max-width: 100%; padding: 0; }
-  .card-paper { box-shadow: none; border: 1px solid #94a3b8; }
-  .btn-repair-cta { display: none !important; }
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+  html,
+  body {
+    width: auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #fff !important;
+    color: #111827 !important;
+    font-family: Arial, "Noto Sans Thai", sans-serif !important;
+    font-size: 10pt;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+  body { display: block !important; }
+  body > .skip-link,
+  body > nav,
+  body > footer,
+  .profile-head,
+  .btn-repair-cta,
+  .print-note {
+    display: none !important;
+  }
+  #main-content {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .profile-wrap {
+    width: 100% !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .card-paper {
+    overflow: visible !important;
+    border: 1px solid #94a3b8;
+    border-radius: 0;
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+  .card-hero {
+    grid-template-columns: 1fr auto !important;
+    padding: 7mm !important;
+    break-inside: avoid;
+  }
+  .hero-qr {
+    width: 28mm;
+    height: 28mm;
+  }
+  .hero-qr-panel { width: 28mm; }
+  .grid-main {
+    grid-template-columns: 1.15fr 0.85fr !important;
+    align-items: start;
+    gap: 4mm;
+    padding: 5mm !important;
+  }
+  .section {
+    min-width: 0;
+    padding: 4mm !important;
+    border-radius: 0;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .section h3 {
+    margin-bottom: 3mm;
+    font-size: 9pt;
+  }
+  .kv {
+    grid-template-columns: 34mm minmax(0, 1fr) !important;
+    gap: 2mm 3mm;
+    font-size: 8.5pt;
+  }
+  .kv .k,
+  .kv .v {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .kv .v img {
+    max-width: 35mm !important;
+    max-height: 28mm !important;
+  }
+  .state-row,
+  .stat,
+  .wo-item {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .state-row { padding: 2mm 3mm; }
+  .stats { gap: 2mm; }
+  .stat { padding: 2mm; }
+  .wo-list { gap: 2mm; }
+  .wo-item { padding: 2mm; }
+  a {
+    color: inherit !important;
+    text-decoration: none !important;
+  }
 }
 </style>
 
@@ -371,6 +469,23 @@
         <h3>ข้อมูลประจำเครื่อง</h3>
         <div class="kv">
           <div class="k">รหัสเครื่อง</div><div class="v">{{ equipment.equipment_id|default:"-" }}</div>
+          {% if has_equipment_image %}
+          <div class="k">รูปภาพ</div>
+          <div class="v">
+            <a href="{% url 'equipment_image_view' equipment.id %}" target="_blank" rel="noopener">
+              <img src="{% url 'equipment_image_view' equipment.id %}" alt="รูปภาพ {{ equipment.equipment_id }}" style="max-width:180px;max-height:140px;object-fit:contain;">
+            </a>
+            <a class="d-block mt-1" href="{% url 'equipment_image_download' equipment.id %}">ดาวน์โหลดภาพ</a>
+          </div>
+          {% elif equipment.equipment_photo %}
+          <div class="k">รูปภาพ</div>
+          <div class="v">
+            <img src="{{ equipment.equipment_photo }}" alt="รูปภาพ {{ equipment.equipment_id }}" style="max-width:180px;max-height:140px;object-fit:contain;" onerror="this.hidden=true; this.nextElementSibling.hidden=false;">
+            <span hidden class="text-muted">ยังไม่มีรูปภาพแนบ</span>
+          </div>
+          {% else %}
+          <div class="k">รูปภาพ</div><div class="v text-muted">ยังไม่มีรูปภาพแนบ</div>
+          {% endif %}
           <div class="k">ยี่ห้อ / รุ่น</div><div class="v">{{ equipment.equipment_brand|default:"-" }} / {{ equipment.equipment_model|default:"-" }}</div>
           <div class="k">Serial Number</div><div class="v">{{ equipment.equipment_sn|default:"-" }}</div>
           <div class="k">เลขครุภัณฑ์</div><div class="v">{{ equipment.equipment_gov|default:"-" }}</div>
