@@ -328,8 +328,10 @@
 					<li class="nav-item dropdown">
 						<a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">สำหรับเจ้าหน้าที่</a>
 						<ul class="dropdown-menu">
+							{% if perms.cmms.view_servicerequest %}
 							<li><a class="dropdown-item" href="{% url 'service_request_list' %}"><i class="bi bi-journal-text me-2"
 										aria-hidden="true"></i>คำขอรับบริการ</a></li>
+							{% endif %}
 							<li><a class="dropdown-item" href="{% url 'spare_part_list' %}"><i class="bi bi-file-earmark-text me-2"
 										aria-hidden="true"></i>อะไหล่คงคลัง</a></li>
 							<li><a class="dropdown-item" href="{% url 'workorder_list' %}"><i class="bi bi-clipboard-check me-2"

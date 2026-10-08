@@ -11,6 +11,17 @@ urlpatterns = [
     path("", views.index, name="index"),
     path("create_request", views.create_request, name="create_request"),
     path("equipment_list/", views.equipment_list, name="equipment_list"),
+    path("equipment-images/", views.equipment_images, name="equipment_images"),
+    path(
+        "equipment-image/<int:equipment_list_id>/",
+        views.equipment_image_view,
+        name="equipment_image_view",
+    ),
+    path(
+        "equipment-image/<int:equipment_list_id>/download/",
+        views.equipment_image_download,
+        name="equipment_image_download",
+    ),
     path("api/equipment_list/", views.api_equipment_list, name="api_equipment_list"),
     path("add_equipment/", views.add_equipment, name="add_equipment"),
     path(

@@ -1,3 +1,6 @@
+import os
+import re
+
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -75,6 +78,12 @@ def save_user_profile(sender, instance, **kwargs):
 
 
 # ทะเบียนเครื่องมือแพทย์
+def equipment_image_upload_path(instance, filename):
+    extension = os.path.splitext(filename)[1].lower()
+    equipment_id = re.sub(r"[^A-Za-z0-9_-]+", "_", instance.equipment_id).strip("_")
+    return f"equipment/{equipment_id or instance.pk}{extension}"
+
+
 class Equipment_list(models.Model):
     # ข้อมูลทั่วไป
     equipment_id = models.CharField(
@@ -94,6 +103,9 @@ class Equipment_list(models.Model):
     equipment_gov = models.CharField(max_length=100, blank=True, default="")  # เลขครุภัณฑ์
     equipment_price = models.IntegerField(null=True, blank=True)  # ราคา
     equipment_photo = models.CharField(max_length=100, blank=True, default="")  # รูป
+    equipment_image = models.FileField(
+        upload_to=equipment_image_upload_path, blank=True
+    )
     equipment_type = models.CharField(max_length=100, blank=True, default="")  # ประเภท
     equipment_life = models.IntegerField(null=True, blank=True)  # อายุการใช้งาน
 
