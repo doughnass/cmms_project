@@ -1,9 +1,11 @@
 import os
 import tempfile
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
@@ -18,6 +20,50 @@ class EquipmentImageTests(TestCase):
         permission = Permission.objects.get(codename="add_equipment_list")
         user.user_permissions.add(permission)
         self.client.force_login(user)
+
+    def test_equipment_form_uses_upload_without_url_field(self):
+        response = self.client.get(reverse("add_equipment"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'name="equipment_photo"')
+        self.assertContains(response, 'name="equipment_image"')
+
+    def test_duplicate_equipment_id_is_rejected_with_visible_error(self):
+        equipment_id = "MEDCMU-0000004"
+        Equipment_list.objects.create(equipment_id=equipment_id)
+
+        response = self.client.post(
+            reverse("add_equipment"),
+            {"equipment_id": equipment_id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "รหัสนี้มีผู้ใช้แล้ว กรุณาใช้รหัสเครื่องอื่น")
+        self.assertEqual(
+            Equipment_list.objects.filter(equipment_id=equipment_id).count(),
+            1,
+        )
+
+    def test_concurrent_duplicate_equipment_id_is_rejected_with_visible_error(self):
+        equipment_id = "MEDCMU-0000005"
+        with (
+            patch("cmms.views.Equipment_list.objects.filter") as filter_mock,
+            patch(
+                "cmms.views.Equipment_list.objects.create",
+                side_effect=IntegrityError("duplicate equipment_id"),
+            ),
+        ):
+            filter_mock.side_effect = [
+                Mock(exists=Mock(return_value=False)),
+                Mock(exists=Mock(return_value=True)),
+            ]
+            response = self.client.post(
+                reverse("add_equipment"),
+                {"equipment_id": equipment_id},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "รหัสนี้มีผู้ใช้แล้ว กรุณาใช้รหัสเครื่องอื่น")
 
     def test_upload_renames_image_and_exposes_view_and_download(self):
         with tempfile.TemporaryDirectory() as media_root:

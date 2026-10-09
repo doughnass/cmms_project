@@ -587,6 +587,27 @@
     flex-direction: column;
   }
 }
+
+.selected-upload-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.65rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.selected-upload-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #f8fafc;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
 </style>
 
 <!-- Page Header -->
@@ -1207,13 +1228,7 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="equipment_photo"><i class="bi bi-link-45deg"></i> รูปภาพ (URL)</label>
-                    <input type="url" id="equipment_photo" name="equipment_photo" class="form-control {% if errors.equipment_photo %}is-invalid{% elif form_values.equipment_photo %}is-valid{% endif %}" value="{{ form_values.equipment_photo|default:'' }}" placeholder="https://...">
-                    {% if errors.equipment_photo %}<div class="invalid-feedback">{{ errors.equipment_photo }}</div>{% endif %}
-                </div>
-
-                <div class="form-group">
-                    <label for="equipment_image"><i class="bi bi-image"></i> อัปโหลดรูปภาพ</label>
+                    <label for="equipment_image"><i class="bi bi-image"></i> อัปโหลดรูปภาพโปรไฟล์</label>
                     <input type="file" id="equipment_image" name="equipment_image" accept="image/jpeg,image/png,image/gif,image/webp,image/bmp" class="form-control {% if errors.equipment_image %}is-invalid{% endif %}">
                     <div class="form-text">รองรับ JPG, PNG, GIF, WEBP และ BMP ขนาดไม่เกิน 10 MB ชื่อไฟล์จะใช้รหัสเครื่อง</div>
                     {% if errors.equipment_image %}<div class="invalid-feedback">{{ errors.equipment_image }}</div>{% endif %}
@@ -1221,14 +1236,27 @@
                         {% if has_equipment_image %}
                             <img src="{% url 'equipment_image_view' equipment_list.id %}" alt="รูปภาพ {{ equipment_list.equipment_id }}" style="max-width:180px;max-height:140px;object-fit:contain;">
                             <div><a href="{% url 'equipment_image_download' equipment_list.id %}">ดาวน์โหลดภาพที่บันทึกไว้</a></div>
-                        {% elif form_values.equipment_photo %}
-                            <img src="{{ form_values.equipment_photo }}" alt="ตัวอย่างรูปภาพอุปกรณ์" style="max-width:180px;max-height:140px;object-fit:contain;" onerror="this.hidden=true; this.nextElementSibling.hidden=false;">
-                            <span hidden class="text-muted">ยังไม่มีรูปภาพแนบ</span>
                         {% else %}
                             <span class="text-muted">ยังไม่มีรูปภาพแนบ</span>
                         {% endif %}
                     </div>
                 </div>
+
+                {% if edit and can_manage_profile_files %}
+                <div class="form-group">
+                    <label for="profile_images"><i class="bi bi-images"></i> อัปโหลดไฟล์ภาพ</label>
+                    <input type="file" id="profile_images" name="profile_images" accept=".jpg,.jpeg,.png,.gif,.webp,.bmp" multiple class="form-control">
+                    <div class="form-text">เลือกได้หลายไฟล์ หรือเลือกเพิ่มหลายครั้งก่อนกดบันทึก รองรับ JPG, PNG, GIF, WEBP และ BMP</div>
+                    <ul id="profile-images-selected" class="selected-upload-list" aria-live="polite"></ul>
+                </div>
+
+                <div class="form-group">
+                    <label for="profile_documents"><i class="bi bi-file-earmark-text"></i> อัปโหลดไฟล์เอกสาร</label>
+                    <input type="file" id="profile_documents" name="profile_documents" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png,.gif,.webp,.bmp" multiple class="form-control">
+                    <div class="form-text">เลือกได้หลายไฟล์ หรือเลือกเพิ่มหลายครั้งก่อนกดบันทึก รองรับ PDF, Excel และไฟล์ภาพ</div>
+                    <ul id="profile-documents-selected" class="selected-upload-list" aria-live="polite"></ul>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -1723,6 +1751,64 @@
 </div>
 
 <script>
+function setupMultipleFileSelection(inputId, listId) {
+    const input = document.getElementById(inputId);
+    const list = document.getElementById(listId);
+    if (!input || !list) return;
+
+    const selectedFiles = new DataTransfer();
+    const formatFileSize = (size) => {
+        if (size < 1024) return `${size} B`;
+        if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+        return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
+    function renderSelectedFiles() {
+        list.replaceChildren();
+        Array.from(selectedFiles.files).forEach((file, index) => {
+            const item = document.createElement('li');
+            item.className = 'selected-upload-item';
+            const name = document.createElement('span');
+            name.textContent = `${file.name} (${formatFileSize(file.size)})`;
+            const remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'btn btn-sm btn-outline-danger';
+            remove.textContent = 'นำออก';
+            remove.setAttribute('aria-label', `นำไฟล์ ${file.name} ออกจากรายการ`);
+            remove.addEventListener('click', () => {
+                const remaining = new DataTransfer();
+                Array.from(selectedFiles.files).forEach((selectedFile, fileIndex) => {
+                    if (fileIndex !== index) remaining.items.add(selectedFile);
+                });
+                selectedFiles.items.clear();
+                Array.from(remaining.files).forEach((selectedFile) => {
+                    selectedFiles.items.add(selectedFile);
+                });
+                input.files = selectedFiles.files;
+                renderSelectedFiles();
+            });
+            item.append(name, remove);
+            list.appendChild(item);
+        });
+    }
+
+    input.addEventListener('change', () => {
+        Array.from(input.files).forEach((file) => {
+            const duplicate = Array.from(selectedFiles.files).some((selectedFile) =>
+                selectedFile.name === file.name
+                && selectedFile.size === file.size
+                && selectedFile.lastModified === file.lastModified
+            );
+            if (!duplicate) selectedFiles.items.add(file);
+        });
+        input.files = selectedFiles.files;
+        renderSelectedFiles();
+    });
+}
+
+setupMultipleFileSelection('profile_images', 'profile-images-selected');
+setupMultipleFileSelection('profile_documents', 'profile-documents-selected');
+
 document.getElementById('equipment_image')?.addEventListener('change', function () {
     const preview = document.getElementById('equipment-image-preview');
     preview.replaceChildren();
@@ -1984,7 +2070,6 @@ document.addEventListener('DOMContentLoaded', function(){
         
         // NO LONGER persist or restore values from localStorage
         // Form starts fresh on every page load/refresh
-
         // Single submit handler: synchronize searchable selects, then validate required fields.
         form.addEventListener('submit', function(e){
             // 1) Synchronize searchable visible inputs into hidden selects so server receives values.
