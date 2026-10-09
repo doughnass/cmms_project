@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% load thai_dates %}
+
+{% block title %}<title>{{ section_label }} | CMMS MedCMU</title>{% endblock %}
+
+{% block content %}
+<style>
+.profile-files-wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 3rem;
+}
+.profile-files-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.profile-files-header h1 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+.profile-files-header p {
+  margin: .3rem 0 0;
+  color: #6b7280;
+  font-size: .85rem;
+}
+.profile-files-search {
+  display: flex;
+  gap: .45rem;
+  width: min(100%, 440px);
+}
+.profile-files-search input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: .55rem;
+  padding: .55rem .75rem;
+}
+.profile-files-card {
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: .85rem;
+  background: #fff;
+  box-shadow: 0 5px 20px rgba(15,23,42,.06);
+}
+.profile-files-list {
+  display: grid;
+}
+.profile-files-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, .7fr) auto;
+  align-items: center;
+  gap: 1rem;
+  padding: .85rem 1rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.profile-files-row:last-child { border-bottom: 0; }
+.profile-files-name {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  min-width: 0;
+  color: #334155;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.profile-files-name > a { color: #4338ca; text-decoration: none; }
+.profile-files-name > a:hover { text-decoration: underline; }
+.profile-files-preview {
+  width: 58px;
+  height: 48px;
+  object-fit: contain;
+  border: 1px solid #e2e8f0;
+  border-radius: .4rem;
+  background: #f8fafc;
+}
+.profile-files-equipment {
+  color: #475569;
+  font-size: .82rem;
+  text-decoration: none;
+}
+.profile-files-equipment:hover { color: #4338ca; text-decoration: underline; }
+.profile-files-meta {
+  margin-top: .2rem;
+  color: #94a3b8;
+  font-size: .72rem;
+}
+.profile-files-empty {
+  padding: 2.5rem 1rem;
+  color: #94a3b8;
+  text-align: center;
+}
+.profile-files-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .75rem;
+  padding: .8rem 1rem;
+  border-top: 1px solid #e2e8f0;
+  color: #64748b;
+  font-size: .8rem;
+}
+@media (max-width: 700px) {
+  .profile-files-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .profile-files-equipment { grid-column: 1 / -1; grid-row: 2; }
+  .profile-files-footer { flex-wrap: wrap; }
+}
+</style>
+
+<div class="profile-files-wrap">
+  <div class="profile-files-header">
+    <div>
+      <h1>{{ section_label }}</h1>
+      <p>Browse uploaded files across all equipment. Newest files appear first.</p>
+    </div>
+    <form method="get" class="profile-files-search" role="search">
+      <input type="search" name="q" value="{{ search_query }}" placeholder="Search by file name or equipment" aria-label="Search files">
+      <button type="submit" class="btn btn-primary"><i class="bi bi-search"></i> Search</button>
+    </form>
+  </div>
+
+  <section class="profile-files-card" aria-label="{{ section_label }}">
+    <div class="profile-files-list">
+      {% for attachment in files %}
+      <article class="profile-files-row">
+        <div>
+          <div class="profile-files-name">
+            {% if attachment.is_image %}
+              <a href="{% url 'equipment_profile_file_view' attachment.equipment.equipment_id attachment.id %}" target="_blank" rel="noopener noreferrer">
+                <img class="profile-files-preview" src="{% url 'equipment_profile_file_view' attachment.equipment.equipment_id attachment.id %}" alt="{{ attachment.display_name }}">
+              </a>
+            {% else %}
+              <i class="bi bi-file-earmark-text fs-4 text-secondary"></i>
+            {% endif %}
+            <a href="{% url 'equipment_profile_file_download' attachment.equipment.equipment_id attachment.id %}">{{ attachment.display_name }}</a>
+          </div>
+          <div class="profile-files-meta">Uploaded by {{ attachment.uploaded_by|default:"Unknown" }} · {{ attachment.uploaded_at|thai_datetime }}</div>
+        </div>
+        <a class="profile-files-equipment" href="{% url 'equipment_profile' attachment.equipment.equipment_id %}?tab={% if section == 'image' %}images{% else %}documents{% endif %}">
+          <i class="bi bi-cpu"></i> {{ attachment.equipment.equipment_id }} · {{ attachment.equipment.equipment_name_TH|default:attachment.equipment.equipment_name_EN }}
+        </a>
+        {% if can_manage_profile_files %}
+          <a class="btn btn-sm btn-outline-primary" href="{% url 'equipment_profile' attachment.equipment.equipment_id %}?tab={% if section == 'image' %}images{% else %}documents{% endif %}">Manage</a>
+        {% endif %}
+      </article>
+      {% empty %}
+      <div class="profile-files-empty">
+        <i class="bi bi-folder2-open fs-2 d-block mb-2"></i>
+        {% if search_query %}No files match your search.{% else %}No files have been uploaded yet.{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    {% if page_obj.paginator.count %}
+    <div class="profile-files-footer">
+      <span>{{ page_obj.paginator.count }} file{{ page_obj.paginator.count|pluralize }}</span>
+      <div class="d-flex align-items-center gap-2">
+        {% if page_obj.has_previous %}
+          <a class="btn btn-sm btn-outline-secondary" href="?q={{ search_query|urlencode }}&page={{ page_obj.previous_page_number }}">Previous</a>
+        {% endif %}
+        <span>Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+          <a class="btn btn-sm btn-outline-secondary" href="?q={{ search_query|urlencode }}&page={{ page_obj.next_page_number }}">Next</a>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -45,6 +45,44 @@ urlpatterns = [
         name="equipment_profile",
     ),
     path(
+        "equipment_profile/<str:code>/files/<str:section>/add/",
+        views.equipment_profile_file_add,
+        name="equipment_profile_file_add",
+    ),
+    path(
+        "equipment_profile/<str:code>/files/<int:file_id>/view/",
+        views.equipment_profile_file_view,
+        name="equipment_profile_file_view",
+    ),
+    path(
+        "equipment_profile/<str:code>/files/<int:file_id>/download/",
+        views.equipment_profile_file_view,
+        {"download": True},
+        name="equipment_profile_file_download",
+    ),
+    path(
+        "equipment-profile-files/images/",
+        views.equipment_profile_files_list,
+        {"section": "image"},
+        name="equipment_profile_images",
+    ),
+    path(
+        "equipment-profile-files/documents/",
+        views.equipment_profile_files_list,
+        {"section": "document"},
+        name="equipment_profile_documents",
+    ),
+    path(
+        "equipment_profile/<str:code>/files/<str:section>/<int:file_id>/edit/",
+        views.equipment_profile_file_edit,
+        name="equipment_profile_file_edit",
+    ),
+    path(
+        "equipment_profile/<str:code>/files/<str:section>/<int:file_id>/delete/",
+        views.equipment_profile_file_delete,
+        name="equipment_profile_file_delete",
+    ),
+    path(
         "equipment_profile_by_code/<str:code>/",
         views.equipment_profile_by_code,
         name="equipment_profile_by_code",

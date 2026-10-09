@@ -1,5 +1,6 @@
 import os
 import re
+import uuid
 
 from django.conf import settings
 from django.db import models
@@ -168,12 +169,60 @@ class Equipment_list(models.Model):
         return ", ".join(parts) if parts else eid or name or super().__str__()
 
 
+def equipment_profile_file_upload_path(instance, filename):
+    extension = os.path.splitext(os.path.basename(filename))[1].lower()
+    equipment_id = re.sub(
+        r"[^A-Za-z0-9_-]+", "_", instance.equipment.equipment_id
+    ).strip("_")
+    return (
+        f"equipment_profile/{equipment_id or instance.equipment_id}/"
+        f"{instance.section}/{uuid.uuid4().hex}{extension}"
+    )
+
+
+class EquipmentProfileFile(models.Model):
+    IMAGE = "image"
+    DOCUMENT = "document"
+    SECTION_CHOICES = [
+        (IMAGE, "รูปภาพ"),
+        (DOCUMENT, "เอกสาร/คู่มือ"),
+    ]
+
+    equipment = models.ForeignKey(
+        Equipment_list, on_delete=models.CASCADE, related_name="profile_files"
+    )
+    section = models.CharField(max_length=12, choices=SECTION_CHOICES)
+    file = models.FileField(upload_to=equipment_profile_file_upload_path)
+    display_name = models.CharField(max_length=255)
+    uploaded_by = models.CharField(max_length=255, blank=True, default="")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at", "-id"]
+
+    @property
+    def is_image(self):
+        return os.path.splitext(self.file.name)[1].lower() in {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".webp",
+            ".bmp",
+        }
+
+    def __str__(self):
+        return f"{self.equipment.equipment_id}: {self.display_name}"
+
+
 # ประวัติการขึ้นทะเบียนและแก้ไขอุปกรณ์ (Equipment Registration and Edit History)
 class EquipmentHistory(models.Model):
     ACTION_TYPES = [
         ('CREATE', 'สร้างทะเบียน'),
         ('UPDATE', 'แก้ไขทะเบียน'),
         ('DELETE', 'ลบทะเบียน'),
+        ('FILE_UPLOAD', 'อัปโหลดไฟล์'),
+        ('FILE_DELETE', 'ลบไฟล์'),
     ]
     
     equipment_id = models.CharField(max_length=20, db_index=True, verbose_name='รหัสเครื่อง')

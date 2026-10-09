@@ -248,6 +248,125 @@
   font-size: 0.74rem;
   color: #6b7280;
 }
+.profile-tabs {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--line);
+}
+.profile-tab {
+  color: #475569;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 0.55rem 0.55rem 0 0;
+  padding: 0.55rem 0.9rem;
+  text-decoration: none;
+  font-weight: 700;
+}
+.profile-tab.active {
+  color: var(--teal);
+  background: #fff;
+  border-color: var(--line);
+}
+.files-panel {
+  padding: 1rem;
+}
+.files-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.files-toolbar h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.files-search,
+.files-upload,
+.file-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+.files-search input,
+.files-upload input[type="search"],
+.file-edit input[type="text"],
+.file-edit input[type="file"] {
+  min-width: 0;
+}
+.files-upload {
+  padding: 0.8rem;
+  margin-bottom: 1rem;
+  border: 1px dashed #94a3b8;
+  border-radius: 0.65rem;
+  background: #f8fafc;
+}
+.profile-file-list {
+  display: grid;
+  gap: 0.65rem;
+}
+.profile-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: #fff;
+}
+.profile-file-name {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+  color: #1f2937;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.profile-file-preview {
+  max-width: 88px;
+  max-height: 68px;
+  object-fit: contain;
+  border-radius: 0.35rem;
+}
+.profile-file-meta {
+  margin-top: 0.2rem;
+  color: var(--sub);
+  font-size: 0.75rem;
+}
+.file-admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.file-edit-panel {
+  display: none;
+  flex-basis: 100%;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--line);
+}
+.file-edit-panel.is-open {
+  display: block;
+}
+.files-readonly-note {
+  color: #475569;
+  background: #f1f5f9;
+  padding: 0.65rem 0.8rem;
+  border-radius: 0.55rem;
+  margin-bottom: 0.8rem;
+  font-size: 0.82rem;
+}
+.profile-file-empty {
+  padding: 1.2rem;
+  text-align: center;
+  color: var(--sub);
+}
 @keyframes repair-glow {
   0%, 100% { box-shadow: 0 4px 16px rgba(245, 158, 11, 0.35); }
   50% { box-shadow: 0 6px 24px rgba(245, 158, 11, 0.55); }
@@ -331,6 +450,9 @@
   .card-hero {
     grid-template-columns: 1fr;
   }
+  .profile-file {
+    grid-template-columns: 1fr;
+  }
 }
 @media print {
   @page {
@@ -355,6 +477,7 @@
   body > nav,
   body > footer,
   .profile-head,
+  .profile-tabs,
   .btn-repair-cta,
   .print-note {
     display: none !important;
@@ -443,11 +566,20 @@
     <h1><i class="bi bi-person-vcard"></i> โปรไฟล์เครื่องมือ</h1>
     <div class="profile-actions">
       <a href="{% url 'equipment_list' %}" class="profile-btn"><i class="bi bi-arrow-left"></i> กลับรายการ</a>
-      <a href="{% url 'edit_equipment' equipment.id %}" class="profile-btn"><i class="bi bi-pencil-square"></i> แก้ไข</a>
-      <button type="button" onclick="window.print()" class="profile-btn primary"><i class="bi bi-printer"></i> พิมพ์โปรไฟล์</button>
+      {% if active_tab == "info" %}
+        <a href="{% url 'edit_equipment' equipment.id %}" class="profile-btn"><i class="bi bi-pencil-square"></i> แก้ไข</a>
+        <button type="button" onclick="window.print()" class="profile-btn primary"><i class="bi bi-printer"></i> พิมพ์โปรไฟล์</button>
+      {% endif %}
     </div>
   </div>
 
+  <nav class="profile-tabs" aria-label="เมนูโปรไฟล์เครื่องมือ">
+    <a href="{% url 'equipment_profile' equipment.equipment_id %}?tab=info" class="profile-tab{% if active_tab == 'info' %} active{% endif %}"{% if active_tab == "info" %} aria-current="page"{% endif %}>ข้อมูลเครื่อง</a>
+    <a href="{% url 'equipment_profile' equipment.equipment_id %}?tab=images" class="profile-tab{% if active_tab == 'images' %} active{% endif %}"{% if active_tab == "images" %} aria-current="page"{% endif %}>รูปภาพ</a>
+    <a href="{% url 'equipment_profile' equipment.equipment_id %}?tab=documents" class="profile-tab{% if active_tab == 'documents' %} active{% endif %}"{% if active_tab == "documents" %} aria-current="page"{% endif %}>เอกสาร/คู่มือ</a>
+  </nav>
+
+  {% if active_tab == "info" %}
   <article class="card-paper">
     <div class="card-hero">
       <div>
@@ -536,6 +668,78 @@
     </div>
   </article>
 
+  {% else %}
+  <section class="card-paper files-panel">
+    <div class="files-toolbar">
+      <h2>{% if active_tab == "images" %}รูปภาพ{% else %}เอกสาร/คู่มือ{% endif %} - {{ equipment.equipment_name_TH|default:equipment.equipment_id }}</h2>
+      <form method="get" class="files-search" role="search">
+        <input type="hidden" name="tab" value="{{ active_tab }}">
+        <input type="search" name="q" value="{{ file_query }}" placeholder="ค้นหาจากชื่อไฟล์" aria-label="ค้นหาจากชื่อไฟล์">
+        <button class="profile-btn" type="submit"><i class="bi bi-search"></i> ค้นหา</button>
+      </form>
+    </div>
+
+    {% if can_manage_profile_files %}
+      <form method="post" enctype="multipart/form-data" class="files-upload" action="{% url 'equipment_profile_file_add' equipment.equipment_id section %}">
+        {% csrf_token %}
+        <label for="profile-files-upload">แนบไฟล์{% if active_tab == "images" %}ภาพหรือ PDF{% else %}เอกสาร PDF, Excel หรือรูปภาพ{% endif %}</label>
+        <input id="profile-files-upload" type="file" name="files" multiple required{% if active_tab == "images" %} accept=".jpg,.jpeg,.png,.gif,.webp,.bmp,.pdf"{% else %} accept=".jpg,.jpeg,.png,.gif,.webp,.bmp,.pdf,.xls,.xlsx"{% endif %}>
+        <button type="submit" class="profile-btn primary"><i class="bi bi-upload"></i> แนบไฟล์</button>
+      </form>
+    {% else %}
+      <div class="files-readonly-note">บัญชีของคุณสามารถดูและค้นหาไฟล์ได้ แต่จัดการไฟล์ได้เฉพาะกลุ่ม Admin</div>
+    {% endif %}
+
+    <div class="profile-file-list">
+      {% for attachment in profile_files %}
+        <article class="profile-file">
+          <div>
+            <div class="profile-file-name">
+              {% if attachment.is_image %}
+                <a href="{% url 'equipment_profile_file_view' equipment.equipment_id attachment.id %}" target="_blank" rel="noopener noreferrer" aria-label="เปิดภาพ {{ attachment.display_name }}">
+                  <img class="profile-file-preview" src="{% url 'equipment_profile_file_view' equipment.equipment_id attachment.id %}" alt="{{ attachment.display_name }}">
+                </a>
+              {% else %}
+                <i class="bi bi-file-earmark-text"></i>
+              {% endif %}
+              <a href="{% url 'equipment_profile_file_download' equipment.equipment_id attachment.id %}">{{ attachment.display_name }}</a>
+            </div>
+            <div class="profile-file-meta">เพิ่มโดย {{ attachment.uploaded_by|default:"ไม่ระบุ" }} | {{ attachment.uploaded_at|thai_datetime }}</div>
+          </div>
+          <div class="file-admin-actions">
+            {% if can_manage_profile_files %}
+              <button type="button" class="profile-btn" aria-expanded="false" aria-controls="file-edit-{{ attachment.id }}" onclick="toggleFileEdit({{ attachment.id }}, this)">
+                <i class="bi bi-pencil-square"></i> แก้ไขชื่อ
+              </button>
+              <div id="file-edit-{{ attachment.id }}" class="file-edit-panel">
+                <form method="post" class="file-edit" action="{% url 'equipment_profile_file_edit' equipment.equipment_id section attachment.id %}">
+                  {% csrf_token %}
+                  <label for="file-name-{{ attachment.id }}">ชื่อไฟล์</label>
+                  <input id="file-name-{{ attachment.id }}" type="text" name="display_name" value="{{ attachment.display_name }}" maxlength="255" required>
+                  <button type="submit" class="profile-btn primary"><i class="bi bi-check-lg"></i> บันทึกชื่อ</button>
+                </form>
+                <form method="post" enctype="multipart/form-data" class="file-edit mt-2" action="{% url 'equipment_profile_file_edit' equipment.equipment_id section attachment.id %}">
+                  {% csrf_token %}
+                  <label for="replace-file-{{ attachment.id }}">แทนที่ไฟล์</label>
+                  <input id="replace-file-{{ attachment.id }}" type="file" name="file" aria-label="เลือกไฟล์ใหม่เพื่อแทนที่">
+                  <button type="submit" class="profile-btn"><i class="bi bi-upload"></i> อัปเดตไฟล์</button>
+                </form>
+              </div>
+              <form method="post" action="{% url 'equipment_profile_file_delete' equipment.equipment_id section attachment.id %}" onsubmit="return confirm('ต้องการลบไฟล์นี้หรือไม่?');">
+                {% csrf_token %}
+                <button type="submit" class="profile-btn"><i class="bi bi-trash"></i> ลบ</button>
+              </form>
+            {% endif %}
+          </div>
+        </article>
+      {% empty %}
+        <div class="profile-file-empty">ไม่พบไฟล์{% if file_query %}ที่ตรงกับคำค้นหา{% else %}ที่แนบไว้{% endif %}</div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if active_tab == "info" %}
   <button type="button" onclick="requestServiceForEquipment()" class="btn-repair-cta">
     <div class="btn-repair-cta-icon">
       <i class="bi bi-wrench-adjustable-circle-fill"></i>
@@ -578,5 +782,13 @@
   <div class="print-note">
     เอกสารนี้สำหรับการแสดงทะเบียนเครื่องมือแบบหน้างานและพิมพ์เก็บเอกสาร
   </div>
+  {% endif %}
 </div>
+<script>
+function toggleFileEdit(fileId, button) {
+  const panel = document.getElementById(`file-edit-${fileId}`);
+  const isOpen = panel.classList.toggle('is-open');
+  button.setAttribute('aria-expanded', String(isOpen));
+}
+</script>
 {% endblock %}

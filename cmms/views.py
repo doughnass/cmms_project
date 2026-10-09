@@ -14,11 +14,13 @@ from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib.auth.decorators import user_passes_test
 from django.contrib.auth.forms import PasswordChangeForm
-from django.http import FileResponse, HttpResponse, JsonResponse
+from django.core.exceptions import PermissionDenied
+from django.db import IntegrityError, transaction
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_http_methods, require_POST
 from django.core.files.storage import default_storage
 from django.utils import timezone
 from urllib.parse import quote
@@ -28,12 +30,11 @@ import os
 from cmms.models import Customer_list, Equipment_list
 
 from .forms import ProfileForm
-from .models import MasterItem
+from .models import EquipmentProfileFile, MasterItem
 from .history_utils import log_equipment_history, capture_equipment_snapshot
 
 # Module logger for this views module — use logging instead of print()
 logger = logging.getLogger(__name__)
-
 
 # Simple form for MasterItem
 class MasterItemForm(forms.ModelForm):
@@ -2599,6 +2600,242 @@ def _equipment_image_exists(equipment):
     return bool(image and image.storage.exists(image.name))
 
 
+def _equipment_profile_files_admin_required(request):
+    if not (
+        request.user.is_superuser
+        or request.user.groups.filter(name="Admin").exists()
+    ):
+        raise PermissionDenied
+
+
+def _equipment_profile_file_error(upload, section):
+    extension = os.path.splitext(upload.name)[1].lower()
+    image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+    document_extensions = image_extensions | {".pdf", ".xls", ".xlsx"}
+    allowed_extensions = (
+        document_extensions
+        if section == EquipmentProfileFile.DOCUMENT
+        else image_extensions | {".pdf"}
+    )
+    if extension not in allowed_extensions:
+        return "ชนิดไฟล์ไม่รองรับ กรุณาเลือกไฟล์ภาพ, PDF หรือ Excel ตามเมนู"
+
+    if extension in image_extensions:
+        return _validate_equipment_image(upload)
+    if upload.size > 20 * 1024 * 1024:
+        return "ไฟล์ต้องมีขนาดไม่เกิน 20 MB"
+
+    header = upload.read(8)
+    upload.seek(0)
+    if extension == ".pdf" and not header.startswith(b"%PDF-"):
+        return "ไฟล์ที่เลือกไม่ใช่เอกสาร PDF ที่ถูกต้อง"
+    if extension == ".xlsx" and not header.startswith(b"PK"):
+        return "ไฟล์ที่เลือกไม่ใช่เอกสาร Excel ที่ถูกต้อง"
+    if extension == ".xls" and header != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return "ไฟล์ที่เลือกไม่ใช่เอกสาร Excel ที่ถูกต้อง"
+    return None
+
+
+def _equipment_profile_files_url(equipment, section):
+    tab = "images" if section == EquipmentProfileFile.IMAGE else "documents"
+    return f"{reverse('equipment_profile', args=[equipment.equipment_id])}?tab={tab}"
+
+
+def _save_equipment_profile_uploads(request, equipment, section, uploads):
+    errors = [
+        _equipment_profile_file_error(upload, section)
+        for upload in uploads
+    ]
+    if any(errors):
+        return next(error for error in errors if error)
+
+    for upload in uploads:
+        display_name = os.path.basename(upload.name.replace("\\", "/"))[:255]
+        EquipmentProfileFile.objects.create(
+            equipment=equipment,
+            section=section,
+            file=upload,
+            display_name=display_name,
+            uploaded_by=request.user.get_full_name().strip()
+            or request.user.get_username(),
+        )
+        log_equipment_history(
+            equipment_id=equipment.equipment_id,
+            action_type="FILE_UPLOAD",
+            user=request.user,
+            request=request,
+            notes=(
+                f"อัปโหลด{'รูปภาพ' if section == EquipmentProfileFile.IMAGE else 'เอกสาร/คู่มือ'}: "
+                f"{display_name}"
+            ),
+        )
+    return None
+
+
+@login_required
+def equipment_profile_file_view(request, code, file_id, download=False):
+    equipment_file = get_object_or_404(
+        EquipmentProfileFile,
+        id=file_id,
+        equipment__equipment_id=code,
+    )
+    if not equipment_file.file.storage.exists(equipment_file.file.name):
+        raise Http404
+    content_type = mimetypes.guess_type(equipment_file.display_name)[0]
+    return FileResponse(
+        equipment_file.file.open("rb"),
+        content_type=content_type or "application/octet-stream",
+        as_attachment=download,
+        filename=equipment_file.display_name,
+    )
+
+
+@login_required
+def equipment_profile_files_list(request, section):
+    if section not in {EquipmentProfileFile.IMAGE, EquipmentProfileFile.DOCUMENT}:
+        raise Http404
+
+    from django.core.paginator import Paginator
+    from django.db.models import Q
+
+    search_query = request.GET.get("q", "").strip()
+    files = EquipmentProfileFile.objects.filter(section=section).select_related(
+        "equipment"
+    )
+    if search_query:
+        files = files.filter(
+            Q(display_name__icontains=search_query)
+            | Q(equipment__equipment_id__icontains=search_query)
+            | Q(equipment__equipment_name_TH__icontains=search_query)
+            | Q(equipment__equipment_name_EN__icontains=search_query)
+        )
+
+    paginator = Paginator(files.order_by("-uploaded_at", "-id"), 30)
+    page = paginator.get_page(request.GET.get("page"))
+    return render(
+        request,
+        "equipment/equipment_profile_files.html",
+        {
+            "files": page,
+            "page_obj": page,
+            "search_query": search_query,
+            "section": section,
+            "section_label": (
+                "Equipment Images"
+                if section == EquipmentProfileFile.IMAGE
+                else "Equipment Documents / Manuals"
+            ),
+            "can_manage_profile_files": (
+                request.user.is_superuser
+                or request.user.groups.filter(name="Admin").exists()
+            ),
+        },
+    )
+
+
+@login_required
+@require_POST
+def equipment_profile_file_add(request, code, section):
+    _equipment_profile_files_admin_required(request)
+    if section not in {EquipmentProfileFile.IMAGE, EquipmentProfileFile.DOCUMENT}:
+        raise Http404
+    equipment = get_object_or_404(Equipment_list, equipment_id=code)
+    uploads = request.FILES.getlist("files")
+    if not uploads:
+        messages.error(request, "กรุณาเลือกไฟล์ที่ต้องการแนบ")
+        return redirect(_equipment_profile_files_url(equipment, section))
+
+    error = _save_equipment_profile_uploads(request, equipment, section, uploads)
+    if error:
+        messages.error(request, error)
+        return redirect(_equipment_profile_files_url(equipment, section))
+
+    messages.success(request, f"แนบไฟล์จำนวน {len(uploads)} ไฟล์เรียบร้อยแล้ว")
+    return redirect(_equipment_profile_files_url(equipment, section))
+
+
+@login_required
+@require_POST
+def equipment_profile_file_edit(request, code, section, file_id):
+    _equipment_profile_files_admin_required(request)
+    if section not in {EquipmentProfileFile.IMAGE, EquipmentProfileFile.DOCUMENT}:
+        raise Http404
+    equipment = get_object_or_404(Equipment_list, equipment_id=code)
+    attachment = get_object_or_404(
+        EquipmentProfileFile,
+        id=file_id,
+        equipment=equipment,
+        section=section,
+    )
+    upload = request.FILES.get("file")
+    if upload:
+        error = _equipment_profile_file_error(upload, section)
+        if error:
+            messages.error(request, error)
+            return redirect(_equipment_profile_files_url(equipment, section))
+
+    display_name = request.POST.get("display_name", "").strip()
+    if display_name:
+        attachment.display_name = display_name[:255]
+    if upload:
+        old_file_name = attachment.file.name
+        attachment.file = upload
+        attachment.uploaded_by = (
+            request.user.get_full_name().strip() or request.user.get_username()
+        )
+        if not display_name:
+            attachment.display_name = os.path.basename(
+                upload.name.replace("\\", "/")
+            )[:255]
+        attachment.save()
+        if old_file_name != attachment.file.name:
+            attachment.file.storage.delete(old_file_name)
+        log_equipment_history(
+            equipment_id=equipment.equipment_id,
+            action_type="FILE_UPLOAD",
+            user=request.user,
+            request=request,
+            notes=(
+                f"อัปโหลด{'รูปภาพ' if section == EquipmentProfileFile.IMAGE else 'เอกสาร/คู่มือ'} "
+                f"แทนที่ไฟล์: {attachment.display_name}"
+            ),
+        )
+    else:
+        attachment.save(update_fields=["display_name"])
+    messages.success(request, "แก้ไขข้อมูลไฟล์เรียบร้อยแล้ว")
+    return redirect(_equipment_profile_files_url(equipment, section))
+
+
+@login_required
+@require_POST
+def equipment_profile_file_delete(request, code, section, file_id):
+    _equipment_profile_files_admin_required(request)
+    if section not in {EquipmentProfileFile.IMAGE, EquipmentProfileFile.DOCUMENT}:
+        raise Http404
+    equipment = get_object_or_404(Equipment_list, equipment_id=code)
+    attachment = get_object_or_404(
+        EquipmentProfileFile,
+        id=file_id,
+        equipment=equipment,
+        section=section,
+    )
+    display_name = attachment.display_name
+    attachment.file.delete(save=False)
+    attachment.delete()
+    log_equipment_history(
+        equipment_id=equipment.equipment_id,
+        action_type="FILE_DELETE",
+        user=request.user,
+        request=request,
+        notes=(
+            f"ลบ{'รูปภาพ' if section == EquipmentProfileFile.IMAGE else 'เอกสาร/คู่มือ'}: "
+            f"{display_name}"
+        ),
+    )
+    messages.success(request, "ลบไฟล์เรียบร้อยแล้ว")
+    return redirect(_equipment_profile_files_url(equipment, section))
+
+
 @login_required
 def equipment_images(request):
     equipment_with_images = (
@@ -2699,6 +2936,54 @@ def add_equipment(request):
         form_values = {}
         errors = {}
         image_upload = request.FILES.get("equipment_image")
+
+        def render_with_errors():
+            def _ml_err(cat):
+                qs = list(
+                    MasterItem.objects.filter(category=cat, active=True).order_by(
+                        "order", "label"
+                    )
+                )
+                if not qs:
+                    return []
+                label_map = {m.id: m.label for m in qs}
+                parent_map = {m.id: (m.parent_id if m.parent_id else None) for m in qs}
+
+                def build_ancestors(mid):
+                    chain = []
+                    seen = set()
+                    cur = parent_map.get(mid)
+                    while cur and cur not in seen:
+                        seen.add(cur)
+                        lbl = label_map.get(cur)
+                        if lbl:
+                            chain.append(lbl)
+                        cur = parent_map.get(cur)
+                    chain.reverse()
+                    return " > ".join(chain)
+
+                return [
+                    {
+                        "id": item.id,
+                        "label": item.label,
+                        "ancestors": build_ancestors(item.id),
+                    }
+                    for item in qs
+                ]
+
+            context = {
+                "errors": errors,
+                "form_values": form_values,
+                "master_equipment_type": _ml_err("equipment_type"),
+                "master_manufacturers": _ml_err("manufacturers"),
+                "master_departments": _ml_err("departments"),
+                "master_units": _ml_err("units"),
+                "master_customers": _ml_err("customers"),
+                "master_locations": _ml_err("locations"),
+                "master_service_providers": _ml_err("service_providers"),
+            }
+            return render(request, "equipment/equipment_form.html", context)
+
         # Collect values (no longer require presence for any field)
         for field in required_fields:
             val = request.POST.get(field, "")
@@ -2728,7 +3013,7 @@ def add_equipment(request):
                 errors["equipment_id"] = "รหัสต้องมีอย่างน้อย 13 ตัวอักษร"
             # uniqueness check (prevent duplicate equipment_id on create)
             elif Equipment_list.objects.filter(equipment_id=equipment_id_val).exists():
-                errors["equipment_id"] = "รหัสนี้มีอยู่แล้ว"
+                errors["equipment_id"] = "รหัสนี้มีผู้ใช้แล้ว กรุณาใช้รหัสเครื่องอื่น"
 
         # date validation (expecting YYYY-MM-DD)
         import datetime
@@ -2742,54 +3027,7 @@ def add_equipment(request):
                     errors[field] = "รูปแบบวันที่ไม่ถูกต้อง (YYYY-MM-DD)"
 
         if errors:
-            # prepare master lists (same shape as GET) so the unified template can render selects
-            def _ml_err(cat):
-                qs = list(
-                    MasterItem.objects.filter(category=cat, active=True).order_by(
-                        "order", "label"
-                    )
-                )
-                if not qs:
-                    return []
-                label_map = {m.id: m.label for m in qs}
-                parent_map = {m.id: (m.parent_id if m.parent_id else None) for m in qs}
-
-                def build_ancestors(mid):
-                    chain = []
-                    seen = set()
-                    cur = parent_map.get(mid)
-                    while cur and cur not in seen:
-                        seen.add(cur)
-                        lbl = label_map.get(cur)
-                        if lbl:
-                            chain.append(lbl)
-                        cur = parent_map.get(cur)
-                    chain.reverse()
-                    return " > ".join(chain)
-
-                out = []
-                for m in qs:
-                    out.append(
-                        {
-                            "id": m.id,
-                            "label": m.label,
-                            "ancestors": build_ancestors(m.id),
-                        }
-                    )
-                return out
-
-            context = {
-                "errors": errors,
-                "form_values": form_values,
-                "master_equipment_type": _ml_err("equipment_type"),
-                "master_manufacturers": _ml_err("manufacturers"),
-                "master_departments": _ml_err("departments"),
-                "master_units": _ml_err("units"),
-                "master_customers": _ml_err("customers"),
-                "master_locations": _ml_err("locations"),
-                "master_service_providers": _ml_err("service_providers"),
-            }
-            return render(request, "equipment/equipment_form.html", context)
+            return render_with_errors()
 
         # All validations passed — create the object with proper types
         # Cast numeric and date fields
@@ -2803,37 +3041,46 @@ def add_equipment(request):
                 else None
             )
 
-        equipment_list = Equipment_list.objects.create(
-            equipment_id=form_values.get("equipment_id") or "",
-            equipment_code=form_values.get("equipment_code") or "",
-            equipment_name_EN=form_values.get("equipment_name_EN") or "",
-            equipment_name_TH=form_values.get("equipment_name_TH") or "",
-            equipment_brand=form_values.get("equipment_brand") or "",
-            equipment_model=form_values.get("equipment_model") or "",
-            equipment_sn=form_values.get("equipment_sn") or "",
-            equipment_gov=form_values.get("equipment_gov") or "",
-            equipment_price=to_int("equipment_price"),
-            equipment_photo=form_values.get("equipment_photo") or "",
-            equipment_type=form_values.get("equipment_type") or "",
-            equipment_life=to_int("equipment_life"),
-            equipment_waranty_date=to_date("equipment_waranty_date"),
-            equipment_waranty_due=to_date("equipment_waranty_due"),
-            equipment_distributor_name=form_values.get("equipment_distributor_name") or "",
-            equipment_distributor_tel=form_values.get("equipment_distributor_tel") or "",
-            equipment_pm_fq=to_int("equipment_pm_fq"),
-            equipment_pm_due=to_date("equipment_pm_due"),
-            equipment_cal_fq=to_int("equipment_cal_fq"),
-            equipment_cal_due=to_date("equipment_cal_due"),
-            equipment_owner_customer=form_values.get("equipment_owner_customer") or "",
-            equipment_user_customer=form_values.get("equipment_user_customer") or "",
-            equipment_service_provider=form_values.get("equipment_service_provider") or "",
-            equipment_register_username=form_values.get("equipment_register_username") or "",
-            equipment_register_adminname=form_values.get(
-                "equipment_register_adminname"
-            ) or "",
-            equipment_note=form_values.get("equipment_note") or "",
-            created_by=request.user.get_full_name() or request.user.username if request.user.is_authenticated else '',
-        )
+        try:
+            with transaction.atomic():
+                equipment_list = Equipment_list.objects.create(
+                    equipment_id=form_values.get("equipment_id") or "",
+                    equipment_code=form_values.get("equipment_code") or "",
+                    equipment_name_EN=form_values.get("equipment_name_EN") or "",
+                    equipment_name_TH=form_values.get("equipment_name_TH") or "",
+                    equipment_brand=form_values.get("equipment_brand") or "",
+                    equipment_model=form_values.get("equipment_model") or "",
+                    equipment_sn=form_values.get("equipment_sn") or "",
+                    equipment_gov=form_values.get("equipment_gov") or "",
+                    equipment_price=to_int("equipment_price"),
+                    equipment_photo=form_values.get("equipment_photo") or "",
+                    equipment_type=form_values.get("equipment_type") or "",
+                    equipment_life=to_int("equipment_life"),
+                    equipment_waranty_date=to_date("equipment_waranty_date"),
+                    equipment_waranty_due=to_date("equipment_waranty_due"),
+                    equipment_distributor_name=form_values.get("equipment_distributor_name") or "",
+                    equipment_distributor_tel=form_values.get("equipment_distributor_tel") or "",
+                    equipment_pm_fq=to_int("equipment_pm_fq"),
+                    equipment_pm_due=to_date("equipment_pm_due"),
+                    equipment_cal_fq=to_int("equipment_cal_fq"),
+                    equipment_cal_due=to_date("equipment_cal_due"),
+                    equipment_owner_customer=form_values.get("equipment_owner_customer") or "",
+                    equipment_user_customer=form_values.get("equipment_user_customer") or "",
+                    equipment_service_provider=form_values.get("equipment_service_provider") or "",
+                    equipment_register_username=form_values.get("equipment_register_username") or "",
+                    equipment_register_adminname=form_values.get(
+                        "equipment_register_adminname"
+                    ) or "",
+                    equipment_note=form_values.get("equipment_note") or "",
+                    created_by=request.user.get_full_name() or request.user.username if request.user.is_authenticated else '',
+                )
+        except IntegrityError:
+            if not Equipment_list.objects.filter(
+                equipment_id=equipment_id_val
+            ).exists():
+                raise
+            errors["equipment_id"] = "รหัสนี้มีผู้ใช้แล้ว กรุณาใช้รหัสเครื่องอื่น"
+            return render_with_errors()
         equipment_list.save()
         if image_upload:
             _save_equipment_image(equipment_list, image_upload)
@@ -3005,13 +3252,40 @@ def add_equipment(request):
 
 @permission_required("cmms.change_equipment_list", raise_exception=True)
 def edit_equipment(request, equipment_list_id):
+    can_manage_profile_files = (
+        request.user.is_superuser
+        or request.user.groups.filter(name="Admin").exists()
+    )
     if request.method == "POST":
         equipment_list = Equipment_list.objects.get(id=equipment_list_id)
         image_upload = request.FILES.get("equipment_image")
+        profile_image_uploads = request.FILES.getlist("profile_images")
+        profile_document_uploads = request.FILES.getlist("profile_documents")
+        if (profile_image_uploads or profile_document_uploads) and not can_manage_profile_files:
+            raise PermissionDenied
+
         image_error = _validate_equipment_image(image_upload)
         if image_error:
             messages.error(request, image_error)
             return redirect("edit_equipment", equipment_list_id=equipment_list_id)
+        for upload in profile_image_uploads:
+            error = _equipment_profile_file_error(
+                upload, EquipmentProfileFile.IMAGE
+            )
+            if error:
+                messages.error(request, error)
+                return redirect(
+                    "edit_equipment", equipment_list_id=equipment_list_id
+                )
+        for upload in profile_document_uploads:
+            error = _equipment_profile_file_error(
+                upload, EquipmentProfileFile.DOCUMENT
+            )
+            if error:
+                messages.error(request, error)
+                return redirect(
+                    "edit_equipment", equipment_list_id=equipment_list_id
+                )
         # prevent assigning a duplicate equipment_id when editing
         new_equipment_id = request.POST.get("equipment_id", "").strip()
         if (
@@ -3123,6 +3397,7 @@ def edit_equipment(request, equipment_list_id):
                 "form_values": form_values,
                 "edit": True,
                 "equipment_list": equipment_list,
+                "can_manage_profile_files": can_manage_profile_files,
                 "has_equipment_image": _equipment_image_exists(equipment_list),
                 "master_equipment_type": _ml("equipment_type"),
                 "master_frequency_cal": _ml("frequency_cal"),
@@ -3210,7 +3485,21 @@ def edit_equipment(request, equipment_list_id):
             new_data=new_data,
             notes=f'แก้ไขทะเบียนอุปกรณ์'
         )
-        
+
+        for section, uploads in (
+            (EquipmentProfileFile.IMAGE, profile_image_uploads),
+            (EquipmentProfileFile.DOCUMENT, profile_document_uploads),
+        ):
+            if uploads:
+                error = _save_equipment_profile_uploads(
+                    request, equipment_list, section, uploads
+                )
+                if error:
+                    messages.error(request, error)
+                    return redirect(
+                        "edit_equipment", equipment_list_id=equipment_list_id
+                    )
+
         messages.success(request, "แก้ไขข้อมูลเรียบร้อยแล้ว")
         return redirect("/equipment_list")
 
@@ -3387,6 +3676,7 @@ def edit_equipment(request, equipment_list_id):
         "form_values": form_values,
         "edit": True,
         "equipment_list": equipment_list,
+        "can_manage_profile_files": can_manage_profile_files,
         "has_equipment_image": _equipment_image_exists(equipment_list),
         "master_equipment_type": _ml("equipment_type"),
         "master_frequency_cal": _ml("frequency_cal"),
@@ -3420,6 +3710,20 @@ def equipment_profile(request, code):
 
     equipment = get_object_or_404(Equipment_list, equipment_id=code)
     today = timezone.localdate()
+    active_tab = request.GET.get("tab", "info")
+    if active_tab not in {"info", "images", "documents"}:
+        active_tab = "info"
+    file_section = (
+        EquipmentProfileFile.IMAGE
+        if active_tab == "images"
+        else EquipmentProfileFile.DOCUMENT
+    )
+    file_query = request.GET.get("q", "").strip()
+    profile_files = EquipmentProfileFile.objects.filter(
+        equipment=equipment, section=file_section
+    )
+    if file_query:
+        profile_files = profile_files.filter(display_name__icontains=file_query)
 
     def build_due_state(due_date, required=True, warning_days=30):
         # ถ้าไม่มีวันครบกำหนด
@@ -3480,6 +3784,14 @@ def equipment_profile(request, code):
     context = {
         "equipment": equipment,
         "has_equipment_image": _equipment_image_exists(equipment),
+        "active_tab": active_tab,
+        "section": file_section,
+        "profile_files": profile_files,
+        "file_query": file_query,
+        "can_manage_profile_files": (
+            request.user.is_superuser
+            or request.user.groups.filter(name="Admin").exists()
+        ),
         "today": today,
         "qr_payload": qr_payload,
         "qr_image_url": qr_image_url,
@@ -3515,7 +3827,7 @@ def equipment_profile_by_code(request, code):
 @login_required
 def equipment_history(request, equipment_list_id):
     """Display registration, repair, and spare-parts history for equipment"""
-    from .models import EquipmentHistory, WorkOrder, WorkOrderSparePart
+    from .models import EquipmentHistory, MasterItem, WorkOrder, WorkOrderSparePart
     from .history_utils import get_equipment_history, format_field_name
 
     equipment = get_object_or_404(Equipment_list, id=equipment_list_id)
@@ -3527,12 +3839,41 @@ def equipment_history(request, equipment_list_id):
             record.changed_fields = [format_field_name(f) for f in record.changed_fields]
 
     # Work orders for this equipment
-    work_orders = (
+    work_orders = list(
         WorkOrder.objects.filter(equipment=equipment)
         .order_by("-reported_at")
         .prefetch_related("used_spare_parts__spare_part", "logs")
         .select_related("assigned_to", "reported_by", "verified_by")
     )
+    work_order_type_labels = {
+        "repair": "ซ่อมแซม",
+        "maintenance": "บำรุงรักษา",
+        "calibration": "สอบเทียบ",
+        "consultation": "ให้คำแนะนำ",
+        "installation": "ติดตั้ง",
+        "other": "อื่น ๆ",
+        "breakdown": "เสียฉุกเฉิน",
+    }
+    type_counts = {code: 0 for code in work_order_type_labels}
+    for item in MasterItem.objects.filter(
+        category="workorder_type", active=True
+    ).order_by("order", "label"):
+        if item.code and item.code not in work_order_type_labels:
+            work_order_type_labels[item.code] = item.label
+            type_counts[item.code] = 0
+
+    for work_order in work_orders:
+        type_codes = _resolve_workorder_type_codes(work_order)
+        if not type_codes:
+            type_codes.add(work_order.workorder_type or "other")
+        work_order.history_type_codes = type_codes
+        for code in type_codes:
+            type_counts[code] = type_counts.get(code, 0) + 1
+
+    work_order_type_filters = [
+        {"code": code, "label": label, "count": type_counts.get(code, 0)}
+        for code, label in work_order_type_labels.items()
+    ]
 
     # All spare-part entries used in WOs for this equipment
     spare_parts_qs = (
@@ -3555,8 +3896,9 @@ def equipment_history(request, equipment_list_id):
         "equipment": equipment,
         "history": history,
         "work_orders": work_orders,
+        "work_order_type_filters": work_order_type_filters,
         "spare_parts_qs": spare_parts_qs,
-        "wo_count": work_orders.count(),
+        "wo_count": len(work_orders),
         "sp_count": spare_parts_qs.count(),
         "total_sp_cost": total_sp_cost,
         "wo_status_counts": wo_status_counts,
@@ -5315,6 +5657,14 @@ def master_data(request):
             "label": "Equipment Images",
             "url_name": "equipment_images",
             "path": "/equipment-images/",
+        },
+        {
+            "label": "Equipment Profile Images",
+            "path": "/equipment-profile-files/images/",
+        },
+        {
+            "label": "Equipment Documents / Manuals",
+            "path": "/equipment-profile-files/documents/",
         },
         {
             "label": "Equipment Master List",
